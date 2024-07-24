@@ -1,0 +1,58 @@
+---
+- name: Update Enterprise Linux Servers
+  hosts: all
+  become: yes
+  vars:
+    services_to_check:
+      - sshd
+
+  tasks:
+    - name: Update all packages
+      yum:
+        name: '*'
+        state: latest
+      register: update_result
+
+    - name: Check if updates were installed
+      debug:
+        msg: "Updates installed, checking for reboot necessity."
+      when: update_result.changed
+    
+    - name: install yum-utils
+      package:
+        name: yum-utils
+
+    - name: Check if a reboot is required
+      command: needs-restarting -r
+      register: reboot_check
+      failed_when: reboot_check.rc not in [0, 1]
+
+    - name: Reboot the server if necessary
+      reboot:
+      when: reboot_check.rc == 1
+
+    - name: Wait for the server to come back online
+      wait_for_connection:
+        timeout: 300
+      when: reboot_check.rc == 1
+
+    - name: Check if critical services are running
+      service_facts:
+
+    - name: Ensure services are running
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      with_items: "{{ services_to_check }}"
+
+    - name: Check logs for errors
+      command: grep -i 'error' /var/log/messages
+      register: log_errors
+      failed_when: log_errors.rc not in [0, 1]
+
+    - name: Debug log errors
+      debug:
+        var: log_errors.stdout_lines
+      when: log_errors.stdout_lines is defined and log_errors.stdout_lines | length > 0
+
